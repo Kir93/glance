@@ -43,7 +43,16 @@ commands when files may have changed, and draws through the band above the promp
 The lines appear after the next turn. If they do not, restart Claude Code.
 
 To stay current, turn on auto-update for the marketplace: `/plugin` → Marketplaces → `glance` → auto-update. Without
-it, update by hand:
+it, update by hand. The Claude desktop app has no auto-update toggle; it shares `~/.claude/settings.json` with the
+CLI, so set it there instead:
+
+```json
+"extraKnownMarketplaces": {
+  "glance": { "source": { "source": "github", "repo": "Kir93/glance" }, "autoUpdate": true }
+}
+```
+
+To update by hand:
 
 ```text
 /plugin marketplace update glance
