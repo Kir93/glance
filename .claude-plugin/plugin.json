@@ -1,7 +1,7 @@
 {
   "name": "glance",
-  "version": "0.2.0",
-  "description": "Two lines above the prompt: context left, 5-hour and 7-day limits, git state, then the tool, agents and todos in progress. Terminal and desktop.",
+  "version": "0.3.0",
+  "description": "One line above the prompt: context left, 5-hour and 7-day limits, git state, plus the tool, agents and todos while they are running. Terminal and desktop.",
   "types": "./types/index.d.ts",
   "author": {
     "name": "Kir93"

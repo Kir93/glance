@@ -1,14 +1,14 @@
-// glance — two lines above the prompt, drawn the same in the terminal and the desktop app:
+// glance — one line above the prompt, drawn the same in the terminal and the desktop app:
 //
-//   ◔ 38%  124K left  ·  ◑ 5h 41%  ↻2:15  ·  ○ 7d 20%  ↻3d  ·  ⎇ main ±3
-//   ▸ Edit register.ts  #6  ·  ◇ 2 agents 3m  ·  ☐ 2/5 Fix auth bug
+//   idle     ◔ 38% 124K left · ◑ 5h 41% ↻2:15 · ◔ 7d 20% ↻3d · ⎇ main ±3
+//   working  ◔ 38% · ◑ 5h 41% · ◔ 7d 20% · ▸ Edit register.ts #6 · ◇ Explore 45s · ☐ 2/5 Fix auth bug
 //
-// The first line is state that is always true; the second is what is happening. Both lines
-// always draw, so the prompt never jumps when a turn starts or ends. Within a line, segments
-// are kept left to right and the rightmost go first when the band is narrow.
+// State that is always true comes first; what is happening right now is appended only while it
+// is happening. The line count never changes, so the prompt never jumps. When the line is too
+// wide, details are shed before whole segments (see SHED), and the live segments outlast git.
 //
-// VS Code draws no band above the prompt, so there both lines, joined and without color,
-// are pinned as this plugin's status line instead.
+// VS Code draws no band above the prompt, so there the same line, without color, is pinned as
+// this plugin's status line instead.
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
@@ -25,7 +25,7 @@ import type {
 const context = atom({ plugin: 'glance', key: 'context' } as const, null)
 const limits = atom({ plugin: 'glance', key: 'limits' } as const, [])
 const git = atom({ plugin: 'glance', key: 'git' } as const, null)
-const activity = atom({ plugin: 'glance', key: 'activity' } as const, { running: [], calls: 0, lastTurnCalls: 0 })
+const activity = atom({ plugin: 'glance', key: 'activity' } as const, { running: [], calls: 0 })
 const agents = atom({ plugin: 'glance', key: 'agents' } as const, [])
 const todos = atom({ plugin: 'glance', key: 'todos' } as const, [])
 const now = atom({ plugin: 'glance', key: 'now' } as const, 0)
@@ -40,12 +40,17 @@ const MINUTE = 60 * SECOND
 // Running agents are re-read this often, so their elapsed time keeps moving.
 const AGENT_POLL = 5 * SECOND
 const STATUS_COLUMNS = 140
-const SEPARATOR = '  ·  '
+const SEPARATOR = ' · '
 const MUTATING = new Set(['Bash', 'Edit', 'Write', 'NotebookEdit'])
 const GAUGE = ['○', '◔', '◑', '◕', '●']
 
-type Part = { text: string; color?: string; dim?: boolean }
-type Segment = { key: string; parts: Part[] }
+// The order details are shed in when the line is too wide: a part or segment tagged with a stage
+// is left out from that stage on. Context, the limits and the running tool are never shed.
+const SHED = { resets: 1, left: 2, changes: 3, todoText: 4, git: 5 } as const
+const LAST_STAGE = 5
+
+type Part = { text: string; color?: string; dim?: boolean; shed?: number }
+type Segment = { key: string; parts: Part[]; shed?: number; keep?: boolean }
 type Snapshot = {
   ctx: GlanceContext
   windows: GlanceLimit[]
@@ -70,7 +75,7 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
-    await update($, activity, a => ({ ...a, running: [], calls: 0 }))
+    await update($, activity, () => ({ running: [], calls: 0 }))
       .then(() => publishStatus($))
       .catch(() => undefined)
     return next(e)
@@ -79,7 +84,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     if (!e.agentId) {
-      await update($, activity, a => ({ running: [], calls: 0, lastTurnCalls: a.calls }))
+      await update($, activity, () => ({ running: [], calls: 0 }))
       await Promise.all([readUsage($), readGit($), readAgents($)])
     }
     return result
@@ -103,22 +108,12 @@ export const register: Register = on => {
     const snap = await snapshot($)
     if (e.props.hasSurvey || snap === null) return next(e)
 
-    const columns = e.props.bodyColumns - 2
     const { Box, Text } = $.ui.resolve(e)
-    const row = (key: string, segments: Segment[]) =>
-      Box({
-        key,
-        flexDirection: 'row',
-        children: fit(segments, columns).flatMap((segment, i) => {
-          const texts = segment.parts.map(p => Text({ color: p.color, dimColor: p.dim, children: p.text }))
-          return i === 0 ? texts : [Text({ dimColor: true, children: SEPARATOR }), ...texts]
-        }),
-      })
-    return Box({
-      flexDirection: 'column',
-      paddingX: 1,
-      children: [row('state', stateLine(snap)), row('activity', activityLine(snap, e.props.isWorking))],
+    const children = fit(lineOf(snap, e.props.isWorking), e.props.bodyColumns - 2).flatMap((segment, i) => {
+      const texts = segment.parts.map(p => Text({ color: p.color, dimColor: p.dim, children: p.text }))
+      return i === 0 ? texts : [Text({ dimColor: true, children: SEPARATOR }), ...texts]
     })
+    return Box({ flexDirection: 'row', paddingX: 1, children })
   })
 }
 
@@ -210,29 +205,22 @@ async function publishStatus($: EngineInterface) {
   if (!(await $.session.surfaces()).includes('vscode')) return
   const snap = await snapshot($)
   if (snap === null) return
-  const segments = [...stateLine(snap), ...activityLine(snap, snap.act.running.length > 0)]
   $.ui.status(
-    fit(segments, STATUS_COLUMNS)
+    fit(lineOf(snap, snap.act.running.length > 0), STATUS_COLUMNS)
       .map(segment => segment.parts.map(p => p.text).join(''))
       .join(SEPARATOR),
   )
 }
 
-function stateLine(snap: Snapshot) {
+function lineOf(snap: Snapshot, isWorking: boolean) {
   return [
     contextSegment(snap.ctx),
     ...snap.windows.map(w => limitSegment(w, snap.at)),
     snap.repo && gitSegment(snap.repo),
-  ].filter((s): s is Segment => Boolean(s))
-}
-
-function activityLine(snap: Snapshot, isWorking: boolean) {
-  const segments = [
-    activitySegment(snap.act, isWorking),
+    isWorking ? activitySegment(snap.act) : null,
     agentsSegment(snap.running, snap.at),
     todosSegment(snap.list),
   ].filter((s): s is Segment => Boolean(s))
-  return segments.length > 0 ? segments : [{ key: 'ready', parts: [{ text: 'ready', dim: true }] }]
 }
 
 async function readUsage($: EngineInterface) {
@@ -277,7 +265,7 @@ function contextSegment(ctx: GlanceContext): Segment {
     parts: [
       { text: `${gauge(ctx.percent)} `, color },
       { text: `${ctx.percent}%`, color: ctx.percent >= CONTEXT_TIGHT ? color : undefined },
-      { text: `  ${compact(ctx.left)} left`, dim: true },
+      { text: ` ${compact(ctx.left)} left`, dim: true, shed: SHED.left },
     ],
   }
 }
@@ -287,11 +275,12 @@ function limitSegment(lim: GlanceLimit, at: number): Segment {
   const reset = until(lim.resetsAt, at)
   return {
     key: `limit:${lim.window}`,
+    keep: true,
     parts: [
       { text: `${gauge(lim.percent)} `, color },
       { text: `${lim.window} `, dim: true },
       { text: `${Math.round(lim.percent)}%`, color: lim.percent >= LIMIT_TIGHT ? color : undefined },
-      ...(reset ? [{ text: `  ↻${reset}`, dim: true }] : []),
+      ...(reset ? [{ text: ` ↻${reset}`, dim: true, shed: SHED.resets }] : []),
     ],
   }
 }
@@ -299,32 +288,29 @@ function limitSegment(lim: GlanceLimit, at: number): Segment {
 function gitSegment(repo: GlanceGit): Segment {
   return {
     key: 'git',
+    shed: SHED.git,
     parts: [
       { text: '⎇ ', color: 'magenta' },
       { text: repo.branch },
-      { text: repo.changes > 0 ? ` ±${repo.changes}` : ' ✓', dim: true },
+      { text: repo.changes > 0 ? ` ±${repo.changes}` : ' ✓', dim: true, shed: SHED.changes },
     ],
   }
 }
 
-function activitySegment(act: GlanceActivity, isWorking: boolean): Segment | null {
+function activitySegment(act: GlanceActivity): Segment {
   const current = act.running[act.running.length - 1]
-  if (isWorking && current) {
-    return {
-      key: 'activity',
-      parts: [
-        { text: '▸ ', color: 'cyan' },
-        { text: current.tool },
-        ...(current.detail ? [{ text: ` ${current.detail}`, dim: true }] : []),
-        { text: `  #${act.calls}`, dim: true },
-      ],
-    }
+  const count = { text: ` #${act.calls}`, dim: true }
+  if (!current) return { key: 'activity', keep: true, parts: [{ text: '▸ ', color: 'cyan' }, { text: 'working', dim: true }, count] }
+  return {
+    key: 'activity',
+    keep: true,
+    parts: [
+      { text: '▸ ', color: 'cyan' },
+      { text: current.tool },
+      ...(current.detail ? [{ text: ` ${current.detail}`, dim: true }] : []),
+      count,
+    ],
   }
-  if (isWorking) return { key: 'activity', parts: [{ text: act.calls > 0 ? `working  #${act.calls}` : 'working', dim: true }] }
-  if (act.lastTurnCalls > 0) {
-    return { key: 'activity', parts: [{ text: `${act.lastTurnCalls} call${act.lastTurnCalls === 1 ? '' : 's'} last turn`, dim: true }] }
-  }
-  return null
 }
 
 // One line for any number of agents: who, when it is one; how many otherwise; and the oldest's age.
@@ -342,32 +328,40 @@ function agentsSegment(running: GlanceAgent[], at: number): Segment | null {
   }
 }
 
+// Shown only while something is left to do; a finished list disappears.
 function todosSegment(list: GlanceTodo[]): Segment | null {
-  if (list.length === 0) return null
   const done = list.filter(t => t.status === 'completed').length
+  if (list.length === 0 || done === list.length) return null
   const active = list.find(t => t.status === 'in_progress')
   return {
     key: 'todos',
     parts: [
-      done === list.length ? { text: '☑ ', color: 'green' } : { text: '☐ ', color: 'yellow' },
+      { text: '☐ ', color: 'yellow' },
       { text: `${done}/${list.length}`, dim: true },
-      ...(active?.content ? [{ text: ` ${clip(active.content, 32)}` }] : []),
+      ...(active?.content ? [{ text: ` ${clip(active.content, 32)}`, shed: SHED.todoText }] : []),
     ],
   }
 }
 
-// Keeps segments in order until the line would overflow; the first always stays.
+// Sheds details stage by stage until the line fits; if it still does not, drops whole segments
+// from the right, sparing the ones marked keep. The first segment always stays.
 function fit(segments: Segment[], columns: number) {
-  const width = (s: Segment) => s.parts.reduce((n, p) => n + p.text.length, 0)
-  const shown: Segment[] = []
-  let used = 0
-  for (const segment of segments) {
-    const cost = width(segment) + (shown.length > 0 ? SEPARATOR.length : 0)
-    if (shown.length > 0 && used + cost > columns) break
-    shown.push(segment)
-    used += cost
+  const width = (line: Segment[]) =>
+    line.reduce((n, s, i) => n + (i > 0 ? SEPARATOR.length : 0) + s.parts.reduce((m, p) => m + p.text.length, 0), 0)
+  const at = (stage: number) =>
+    segments
+      .filter(s => s.shed === undefined || s.shed > stage)
+      .map(s => ({ ...s, parts: s.parts.filter(p => p.shed === undefined || p.shed > stage) }))
+
+  for (let stage = 0; stage <= LAST_STAGE; stage++) {
+    const line = at(stage)
+    if (width(line) <= columns) return line
   }
-  return shown
+  const line = at(LAST_STAGE)
+  for (let i = line.length - 1; i > 0 && width(line) > columns; i--) {
+    if (!line[i]?.keep) line.splice(i, 1)
+  }
+  return line
 }
 
 function displayTool(tool: string) {
