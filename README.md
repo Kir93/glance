@@ -40,7 +40,17 @@ commands when files may have changed, and draws through the band above the promp
 /reload-plugins
 ```
 
-The line appears after the next turn. If it does not, restart Claude Code.
+The lines appear after the next turn. If they do not, restart Claude Code.
+
+To stay current, turn on auto-update for the marketplace: `/plugin` → Marketplaces → `glance` → auto-update. Without
+it, update by hand:
+
+```text
+/plugin marketplace update glance
+/plugin update glance@glance
+```
+
+glance itself makes no network calls, update checks included.
 
 ## Where it shows
 
