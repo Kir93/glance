@@ -1,2 +1,7 @@
 # Written by Claude Code each time it loads the mod; regenerated for your version.
 .claude-plugin/types/
+
+# Personal dev tooling, injected from the maintainer's config repo; not part of the plugin.
+.claude/
+CLAUDE.local.md
+AGENTS.override.md
