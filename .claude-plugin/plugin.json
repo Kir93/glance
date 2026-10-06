@@ -1,0 +1,10 @@
+{
+  "name": "glance",
+  "version": "0.1.0",
+  "description": "One line above the prompt: context left, the rate limit closest to running out, git state, and what Claude is doing right now. Terminal and desktop.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Kir93"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "glance",
+  "owner": {
+    "name": "Kir93"
+  },
+  "description": "glance: a one-line HUD mod for Claude Code (terminal, desktop, VS Code).",
+  "plugins": [
+    {
+      "name": "glance",
+      "source": "./"
+    }
+  ]
+}
