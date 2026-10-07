@@ -18,6 +18,8 @@ jobs:
         with:
           # The tagged commit, not main's HEAD, so the gate below reads the version the tag names.
           ref: ${{ github.ref }}
+          # Whole history and tags, for the commit list since the previous tag.
+          fetch-depth: 0
 
       - name: Verify plugin.json version against tag
         env:
@@ -38,12 +40,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
-          # Body = the committed update note, then GitHub's changelog generated from the commits since
-          # the previous tag.
-          generated="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="$TAG" --jq .body)"
+          # Body = the committed update note, then the commits since the previous tag (all of them for
+          # the first), version bumps left out. glance pushes to main without pull requests, so GitHub's
+          # generated notes, which list merged pull requests, would be empty.
+          prev="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
           {
             cat .github/release-notes-template.md
             echo
-            echo "$generated"
+            echo "## Changes"
+            echo
+            git log --no-merges --invert-grep --grep="^chore: 버전 v" --format="- %s (%h)" "${prev:+$prev..}$TAG"
+            if [ -n "$prev" ]; then
+              echo
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${prev}...${TAG}"
+            fi
           } > release-body.md
           gh release create "$TAG" --verify-tag --title "$TAG" --notes-file release-body.md

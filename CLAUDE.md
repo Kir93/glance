@@ -39,8 +39,8 @@ preview paths below).
 ## Release
 
 A release is a version tag pushed to GitHub; `.github/workflows/release.yml` checks the tag against `plugin.json` and
-creates the GitHub Release, whose notes are `.github/release-notes-template.md` followed by the commits since the
-previous tag. Feature work does not bump the version — the release does.
+creates the GitHub Release, whose notes are `.github/release-notes-template.md` followed by the commit subjects since
+the previous tag (version bumps left out). Feature work does not bump the version — the release does.
 
 1. Commit the change with explicit paths, message `type: 한글 설명` on one line, no AI attribution. The type drives the
    release notes and the bump.
