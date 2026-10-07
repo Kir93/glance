@@ -92,16 +92,16 @@ async function found($: Engine, pattern: RegExp, bodyColumns = 140, isWorking = 
   return all
 }
 
+const childrenOf = (node: RenderNode) => (typeof node !== 'string' && 'children' in node && Array.isArray(node.children) ? node.children : [])
+const textOf = (node: RenderNode): string => (typeof node === 'string' ? node : childrenOf(node).map(textOf).join(''))
+
 // One drawing of the band: the text of each line, top to bottom, and every Text it holds.
 async function drawing($: Engine, surface: (typeof SURFACES)[number], bodyColumns: number, isWorking = false) {
   const mounted = await $.ui.mount({ ...band(bodyColumns, isWorking), surface })
   const root = await mounted.drawn()
   const texts = (await mounted.findAll({ type: 'Text' })).map(t => t.text)
   await mounted.unmount()
-  const textOf = (node: RenderNode): string =>
-    typeof node === 'string' ? node : 'children' in node && Array.isArray(node.children) ? node.children.map(textOf).join('') : ''
-  const rows = 'children' in root && Array.isArray(root.children) ? root.children.map(textOf) : []
-  return { rows, texts }
+  return { rows: childrenOf(root).map(textOf), texts }
 }
 
 async function rowsOf($: Engine, surface: (typeof SURFACES)[number], bodyColumns: number, isWorking = false) {
@@ -148,18 +148,17 @@ describe('register', () => {
       expect(await idle.find({ type: 'Text', text: /^▸ $/ })).toBeUndefined()
       expect(await idle.find({ type: 'Text', text: /ready|last turn/ })).toBeUndefined()
       await idle.unmount()
-      // Always two lines: the second is blank while nothing is happening.
-      const rows = await rowsOf($, surface, 120)
-      expect(rows).toHaveLength(2)
-      expect(rows[1]).toBe(' ')
+      // Always two lines: the budget, then, with nothing happening, the repository alone.
+      expect(await rowsOf($, surface, 120)).toEqual(['◔ 38% 124K left · ◑ 5h 41% ↻2:15 · ◔ 7d 20% ↻3d', '⎇ main ±2'])
 
-      // Too narrow for everything: details go first, then git; context and both limits stay.
+      // Too narrow for everything: the budget's details go; context and both limits stay. The
+      // repository has the second line to itself and stays.
       const narrow = await $.ui.mount({ ...band(36), surface })
       expect(await narrow.find({ type: 'Text', text: /^38%$/ })).toBeDefined()
       expect(await narrow.find({ type: 'Text', text: /^5h $/ })).toBeDefined()
       expect(await narrow.find({ type: 'Text', text: /^7d $/ })).toBeDefined()
       expect(await narrow.find({ type: 'Text', text: /124K left|↻/ })).toBeUndefined()
-      expect(await narrow.find({ type: 'Text', text: /^main$/ })).toBeUndefined()
+      expect(await narrow.find({ type: 'Text', text: /^main$/ })).toBeDefined()
       await narrow.unmount()
     }
 
@@ -188,8 +187,7 @@ describe('register', () => {
       expect(await working.find({ type: 'Text', text: /124K left/ })).toBeDefined()
       await working.unmount()
       const rows = await rowsOf($, surface, 110, true)
-      expect(rows[0]).toContain('⎇ main')
-      expect(rows[1]).toMatch(/^▸ working #2 · ◇ Explore 40s · ☐ 1\/2 Fix authentication bug$/)
+      expect(rows[1]).toBe('⎇ main ±2 · ▸ working #2 · ◇ Explore 40s · ☐ 1/2 Fix authentication bug')
     }
 
     await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' })
@@ -367,8 +365,8 @@ describe('register', () => {
     expect(await shows($, /^ ±1$/)).toEqual([true, true])
     expect(await shows($, /^ \+120−30$/)).toEqual([true, true])
     // The line count is the first detail to go.
-    expect(await shows($, /^ \+120−30$/, 70)).toEqual([false, false])
-    expect(await shows($, /^ ↑2$/, 70)).toEqual([true, true])
+    expect(await shows($, /^ \+120−30$/, 20)).toEqual([false, false])
+    expect(await shows($, /^ ↑2$/, 20)).toEqual([true, true])
 
     // Nothing unpushed, or no remote to push to: no arrow.
     repo.ahead = '0\n'
@@ -571,8 +569,8 @@ describe('register', () => {
     expect(await shows($, /^cache 8m$/)).toEqual([true, true])
     expect(await shows($, /^ ▲0:14$/)).toEqual([true, true])
     const kept = [/^38%$/, /^5h $/, /^ ▲0:14$/, /^7d $/, /^✗ overloaded$/]
-    const state = [/^ \+120−30$/, /^ ↻/, /^ 124K left$/, /^ ±3$/, /^cache /, /^main$/]
-    await narrow($, false, kept, [state, [/^ Fix auth bug$/, /^codex review$/]])
+    const work = [/^ \+120−30$/, /^ ±3$/, /^ Fix auth bug$/, /^codex review$/, /^main$/]
+    await narrow($, false, kept, [[/^ ↻/, /^ 124K left$/, /^cache /], work])
 
     // Too narrow even for what is kept: the first line is cut at the width, ending in an ellipsis.
     for (const surface of SURFACES) {
@@ -588,8 +586,8 @@ describe('register', () => {
     await $.tool.call({ tool: 'Read', file_path: '/nowhere' })
     expect(await shows($, /^ ✗1$/, 200, true)).toEqual([true, true])
     const kept = [/^38%$/, /^5h $/, /^ ▲0:40$/, /^7d $/, /^▸ $/, /^ ✗1$/]
-    const state = [/^ \+120−30$/, /^ ↻/, /^ 124K left$/, /^ ±3$/, /^main$/]
-    await narrow($, true, kept, [state, [/^ Fix auth bug$/, /^codex review$/]])
+    const work = [/^ \+120−30$/, /^ ±3$/, /^ Fix auth bug$/, /^codex review$/, /^main$/]
+    await narrow($, true, kept, [[/^ ↻/, /^ 124K left$/], work])
   })
 
   test('wide characters count as two columns, so a Korean label still fits its line', { timeoutMs: 30_000 }, async ($, on) => {

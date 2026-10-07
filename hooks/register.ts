@@ -1,12 +1,14 @@
 // glance — two lines above the prompt, drawn the same in the terminal and the desktop app:
 //
-//   ◔ 38% 124K left · ◑ 5h 41% ▲1:40 ↻2:15 · ◔ 7d 20% ↻3d · ⎇ main ±3 ↑2 +120−30
-//   ▸ Edit register.ts #6 ✗2 · ◇ Explore 45s · ⧉ review-changes ×3 4m · ⧗ codex review 6m · ☐ 2/5 Fix auth bug
+//   ◔ 38% 124K left · ◑ 5h 41% ▲1:40 ↻2:15 · ◔ 7d 20% ↻3d
+//   ⎇ main ±3 ↑2 · ▸ Edit register.ts #6 ✗2 · ◇ Explore 45s · ⧗ codex review 6m · ☐ 2/5 Fix auth bug
 //
-// The first line is the state that is always true, plus, while idle, the last turn's API error and
-// a cooling prompt cache. The second is what is happening right now, left blank when nothing is.
-// There are always two lines, so the prompt never jumps. When a line is too wide, long texts give
-// way first, then details (see SHED), then whole segments; what is never shed is cut at the edge.
+// The first line is Claude's budget: the context and the limits, then, while idle, the last turn's
+// API error and a cooling prompt cache. The second is the work: the repository first, so the line
+// is seldom blank, then what is happening right now. Each line starts with what is always there, so
+// it stays put while the rest comes and goes. There are always two lines, so the prompt never jumps.
+// When a line is too wide, long texts give way first, then details (see SHED), then whole segments;
+// what is never shed is cut at the edge.
 //
 // VS Code draws no band above the prompt, so there the two lines, joined and without color, are
 // pinned as this plugin's status line instead.
@@ -372,20 +374,20 @@ async function publishStatus($: EngineInterface) {
   )
 }
 
-// What is true whether or not anything is happening.
+// Claude's budget; while idle, what went wrong with the last turn or is about to.
 function stateLine(snap: Snapshot, isWorking: boolean) {
   return [
     contextSegment(snap.ctx),
     ...snap.windows.map(w => limitSegment(w, snap.at)),
-    snap.repo && gitSegment(snap.repo),
     isWorking ? null : apiErrorSegment(snap.failure),
     isWorking ? null : cacheSegment(snap.answeredAt, snap.at),
   ].filter((s): s is Segment => Boolean(s))
 }
 
-// What is happening right now; empty when nothing is.
+// The work: the repository, then what is happening right now.
 function liveLine(snap: Snapshot, isWorking: boolean) {
   return [
+    snap.repo && gitSegment(snap.repo),
     isWorking ? activitySegment(snap.act) : null,
     agentsSegment(snap.running, snap.at),
     workflowSegment(snap.tasks, snap.crew, snap.at),
@@ -503,6 +505,7 @@ function gitSegment(repo: GlanceGit): Segment {
   return {
     key: 'git',
     shed: SHED.git,
+   
     parts: [
       { text: '⎇ ', color: 'magenta' },
       { text: repo.branch },
@@ -608,6 +611,7 @@ function todosSegment(list: GlanceTodo[]): Segment | null {
   const active = list.find(t => t.status === 'in_progress')
   return {
     key: 'todos',
+   
     parts: [
       { text: '☐ ', color: 'yellow' },
       { text: `${done}/${list.length}`, dim: true },

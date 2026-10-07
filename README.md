@@ -3,12 +3,13 @@
 Two lines above the Claude Code prompt, for the things you would otherwise stop and check:
 
 ```
-◔ 38% 124K left · ◑ 5h 41% ▲1:40 ↻2:15 · ◔ 7d 20% ↻3d · ⎇ main ±3 ↑2 +120−30
-▸ Edit register.ts #6 ✗2 · ⧉ review-changes ×3 4m · ⧗ codex review 6m · ☐ 2/5 Fix auth bug
+◔ 38% 124K left · ◑ 5h 41% ▲1:40 ↻2:15 · ◔ 7d 20% ↻3d
+⎇ main ±3 ↑2 +120−30 · ▸ Edit register.ts #6 ✗2 · ⧗ codex review 6m · ☐ 2/5 Fix auth bug
 ```
 
-The first line is the state that is always true; while idle it also carries the last turn's API error and a cooling
-prompt cache. The second line is what is happening right now, and stays blank while nothing is.
+The first line is Claude's budget: the context window and the limits. While idle, the last turn's API error and a
+cooling prompt cache join it. The second line is the work: the repository first, then what is happening right now.
+Each line starts with what is always there, so it stays put while the rest comes and goes.
 
 | Segment | Shows |
 | --- | --- |
@@ -48,9 +49,9 @@ prompt cache. The second line is what is happening right now, and stays blank wh
 Every gauge is the same circle, filling in fifths, beside the exact number. There are always two lines, so the prompt
 does not jump when a turn starts or ends. Each line fits its own width. A todo, a background task, a workflow or a
 command shows whole while there is room, and is clipped with `…` before anything else gives way. When a line is still
-too wide, details go first: on the first line the changed lines, reset times, tokens left, the change count, the
-cache, then git with its unpushed count; on the second the todo text, then the background label (a count takes its
-place), then whole segments from the right. Context, the limits with their pace warning, an API error, and the
+too wide, details go first: on the first line the reset times, tokens left, then the cache; on the second the changed
+lines, the change count, the todo text, the background label (a count takes its place), then git with its unpushed
+count, then whole segments from the right. Context, the limits with their pace warning, an API error, and the
 running tool with its failed calls always stay. If even those do not fit, the line is cut at the edge and ends in
 `…`.
 

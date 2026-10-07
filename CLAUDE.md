@@ -67,6 +67,6 @@ Commit, push and anything else public wait for an explicit request.
   `$.process.run`; the README promises this.
 - Don't draw a tree a surface may refuse. Instead, cover every new element or color in the test on both `terminal`
   and `desktop`; a refused tree only shows up in the debug log.
-- Don't move the prompt. Instead, keep the HUD to exactly two lines — state on the first, what is happening on the
-  second, drawn blank while nothing is — and when a line is too wide shed details in `SHED` order before dropping whole
-  segments.
+- Don't move the prompt. Instead, keep the HUD to exactly two lines — Claude's budget on the first, the work on the
+  second (git first, then what is happening), each led by what is always there, a line drawn blank when it has nothing — and
+  when a line is too wide shed details in `SHED` order before dropping whole segments.
