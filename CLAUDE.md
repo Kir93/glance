@@ -38,9 +38,16 @@ preview paths below).
 
 ## Release
 
-1. Bump `version` in `.claude-plugin/plugin.json` (semver). `/plugin update` compares this field.
-2. Commit with explicit paths, message `type: 한글 설명` on one line, no AI attribution.
-3. `git push origin main`. This folder's git identity and SSH remote come from the `~/Documents/toy` config (Kir93).
+A release is a version tag pushed to GitHub; `.github/workflows/release.yml` checks the tag against `plugin.json` and
+creates the GitHub Release, whose notes are `.github/release-notes-template.md` followed by the commits since the
+previous tag. Feature work does not bump the version — the release does.
+
+1. Commit the change with explicit paths, message `type: 한글 설명` on one line, no AI attribution. The type drives the
+   release notes and the bump.
+2. Bump `version` in `.claude-plugin/plugin.json` (semver; `/plugin update` compares this field) and commit it alone
+   as `chore: 버전 vX.Y.Z`. While the version is `0.x`, a change that would be major ships as minor.
+3. Tag `vX.Y.Z` and push both: `git push origin main vX.Y.Z`. This folder's git identity and SSH remote come from the
+   `~/Documents/toy` config (Kir93).
 4. Refresh the installed copy, then start a new session:
 
 ```bash

@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout pushed tag
+        uses: actions/checkout@v4
+        with:
+          # The tagged commit, not main's HEAD, so the gate below reads the version the tag names.
+          ref: ${{ github.ref }}
+
+      - name: Verify plugin.json version against tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag must match vX.Y.Z, got: $TAG"
+            exit 1
+          fi
+          actual="$(jq -r .version .claude-plugin/plugin.json)"
+          if [ "$actual" != "${TAG#v}" ]; then
+            echo ".claude-plugin/plugin.json version is $actual, tag is $TAG"
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Body = the committed update note, then GitHub's changelog generated from the commits since
+          # the previous tag.
+          generated="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="$TAG" --jq .body)"
+          {
+            cat .github/release-notes-template.md
+            echo
+            echo "$generated"
+          } > release-body.md
+          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file release-body.md
