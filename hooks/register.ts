@@ -66,6 +66,10 @@ const PACE_KEEP = 60 * MINUTE
 const CACHE_TTL = 60 * MINUTE
 const CACHE_TIGHT = 10 * MINUTE
 const STATUS_COLUMNS = 140
+// The desktop app draws the band in a proportional font, where a line takes fewer columns than a
+// terminal gives it, how many fewer depending on the text. What to shed is judged at this many
+// times its columns; how much of a label, a todo or a command shows, the surface decides at the edge.
+const PROPORTIONAL = 1.2
 const SEPARATOR = ' · '
 const MUTATING = new Set(['Bash', 'Edit', 'Write', 'NotebookEdit'])
 // Characters a terminal draws two columns wide: Hangul, CJK, fullwidth forms and emoji.
@@ -194,15 +198,24 @@ export const register: Register = on => {
     const snap = await snapshot($)
     if (e.props.hasSurvey || snap === null) return next(e)
 
-    const columns = e.props.bodyColumns - 2
+    const isProportional = e.surface === 'desktop'
+    const columns = Math.floor((e.props.bodyColumns - 2) * (isProportional ? PROPORTIONAL : 1))
     const { Box, Text } = $.ui.resolve(e)
+    // On the desktop app a part with a floor is cut by the surface where the row really ends, and
+    // every other part holds its width.
+    const draw = (p: Part) => {
+      if (!isProportional) return Text({ color: p.color, dimColor: p.dim, children: p.text })
+      if (p.floor !== undefined) return Text({ color: p.color, dimColor: p.dim, wrap: 'truncate-end', children: p.text })
+      return Box({ flexShrink: 0, children: [Text({ color: p.color, dimColor: p.dim, children: p.text })] })
+    }
     // A line with nothing on it is drawn blank, so the band keeps its height.
     const row = (key: string, segments: Segment[]) => {
-      const texts = fit(segments, columns).flatMap((segment, i) => {
-        const parts = segment.parts.map(p => Text({ color: p.color, dimColor: p.dim, children: p.text }))
-        return i === 0 ? parts : [Text({ dimColor: true, children: SEPARATOR }), ...parts]
+      const texts = fit(segments, columns, isProportional).flatMap((segment, i) => {
+        const parts = segment.parts.map(draw)
+        return i === 0 ? parts : [draw({ text: SEPARATOR, dim: true }), ...parts]
       })
-      return Box({ key, flexDirection: 'row', children: texts.length > 0 ? texts : [Text({ children: ' ' })] })
+      const children = texts.length > 0 ? texts : [Text({ children: ' ' })]
+      return Box({ key, flexDirection: 'row', ...(isProportional ? { overflow: 'hidden' as const } : {}), children })
     }
     return Box({
       flexDirection: 'column',
@@ -622,10 +635,13 @@ function todosSegment(list: GlanceTodo[]): Segment | null {
 
 // Sheds details stage by stage until the line fits; if it still does not, drops whole segments
 // from the right, sparing the ones marked keep. The first segment always stays, and should what
-// is kept still not fit, the line is cut at the width and ends in an ellipsis.
-function fit(segments: Segment[], columns: number) {
+// is kept still not fit, the line is cut at the width and ends in an ellipsis. On an elastic
+// surface a floored part counts only its floor and, until that last resort, is left whole for the
+// surface to cut.
+function fit(segments: Segment[], columns: number, isElastic = false) {
+  const size = (p: Part) => (isElastic && p.floor !== undefined ? Math.min(cells(p.text), p.floor) : cells(p.text))
   const width = (line: Segment[]) =>
-    line.reduce((n, s, i) => n + (i > 0 ? cells(SEPARATOR) : 0) + s.parts.reduce((m, p) => m + cells(p.text), 0), 0)
+    line.reduce((n, s, i) => n + (i > 0 ? cells(SEPARATOR) : 0) + s.parts.reduce((m, p) => m + size(p), 0), 0)
   const at = (stage: number) =>
     segments
       .filter(s => s.shed === undefined || s.shed > stage)
@@ -657,7 +673,7 @@ function fit(segments: Segment[], columns: number) {
       .reverse()
 
   for (let stage = 0; stage <= LAST_STAGE; stage++) {
-    const line = squeeze(at(stage), width(at(stage)) - columns)
+    const line = isElastic ? at(stage) : squeeze(at(stage), width(at(stage)) - columns)
     if (width(line) <= columns) return line
   }
   const line = squeeze(at(LAST_STAGE), Infinity)

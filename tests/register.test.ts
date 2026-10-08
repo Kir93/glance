@@ -4,11 +4,21 @@ import type { Engine } from 'claude-code/testing'
 
 const START = Date.parse('2026-10-06T00:00:00Z')
 const SECOND = 1000
-const band = (bodyColumns: number, isWorking = false) =>
+// The band on a surface `bodyColumns` terminal columns wide. The desktop app fits a line to 1.2
+// times its columns, so it is given the fewest that leave it no more to fit to than the terminal.
+const band = (surface: 'terminal' | 'desktop', bodyColumns: number, isWorking = false) =>
   ({
     plugin: 'glance',
     component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking, maxRows: 10, bodyColumns, scroll: { offset: 0, bodyRows: 10 }, view: {} },
+    surface,
+    props: {
+      hasSurvey: false,
+      isWorking,
+      maxRows: 10,
+      bodyColumns: surface === 'desktop' ? Math.floor((bodyColumns - 2) / 1.2) + 2 : bodyColumns,
+      scroll: { offset: 0, bodyRows: 10 },
+      view: {},
+    },
   }) as const
 
 // `git` on branch `main` with this `status --porcelain` (or the repo's own); the repo's remotes,
@@ -85,7 +95,7 @@ const SURFACES = ['terminal', 'desktop'] as const
 async function found($: Engine, pattern: RegExp, bodyColumns = 140, isWorking = false) {
   const all = []
   for (const surface of SURFACES) {
-    const line = await $.ui.mount({ ...band(bodyColumns, isWorking), surface })
+    const line = await $.ui.mount(band(surface, bodyColumns, isWorking))
     all.push(await line.find({ type: 'Text', text: pattern }))
     await line.unmount()
   }
@@ -94,14 +104,17 @@ async function found($: Engine, pattern: RegExp, bodyColumns = 140, isWorking = 
 
 const childrenOf = (node: RenderNode) => (typeof node !== 'string' && 'children' in node && Array.isArray(node.children) ? node.children : [])
 const textOf = (node: RenderNode): string => (typeof node === 'string' ? node : childrenOf(node).map(textOf).join(''))
+// The part of a row held to its width: a Text the surface cuts at the edge is left out.
+const isCut = (node: RenderNode) => typeof node !== 'string' && node.type === 'Text' && node.props?.wrap === 'truncate-end'
+const heldOf = (node: RenderNode): string => (typeof node === 'string' ? node : isCut(node) ? '' : childrenOf(node).map(heldOf).join(''))
 
 // One drawing of the band: the text of each line, top to bottom, and every Text it holds.
 async function drawing($: Engine, surface: (typeof SURFACES)[number], bodyColumns: number, isWorking = false) {
-  const mounted = await $.ui.mount({ ...band(bodyColumns, isWorking), surface })
+  const mounted = await $.ui.mount(band(surface, bodyColumns, isWorking))
   const root = await mounted.drawn()
   const texts = (await mounted.findAll({ type: 'Text' })).map(t => t.text)
   await mounted.unmount()
-  return { rows: childrenOf(root).map(textOf), texts }
+  return { rows: childrenOf(root).map(textOf), held: childrenOf(root).map(heldOf), texts }
 }
 
 async function rowsOf($: Engine, surface: (typeof SURFACES)[number], bodyColumns: number, isWorking = false) {
@@ -138,7 +151,7 @@ describe('register', () => {
     await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work/app' })
 
     for (const surface of ['terminal', 'desktop'] as const) {
-      const idle = await $.ui.mount({ ...band(120), surface })
+      const idle = await $.ui.mount(band(surface, 120))
       expect(await idle.find({ type: 'Text', text: /^38%$/ })).toBeDefined()
       expect(await idle.find({ type: 'Text', text: /124K left/ })).toBeDefined()
       expect(await idle.find({ type: 'Text', text: /↻2:15/ })).toBeDefined()
@@ -153,7 +166,7 @@ describe('register', () => {
 
       // Too narrow for everything: the budget's details go; context and both limits stay. The
       // repository has the second line to itself and stays.
-      const narrow = await $.ui.mount({ ...band(36), surface })
+      const narrow = await $.ui.mount(band(surface, 36))
       expect(await narrow.find({ type: 'Text', text: /^38%$/ })).toBeDefined()
       expect(await narrow.find({ type: 'Text', text: /^5h $/ })).toBeDefined()
       expect(await narrow.find({ type: 'Text', text: /^7d $/ })).toBeDefined()
@@ -176,7 +189,7 @@ describe('register', () => {
 
     for (const surface of ['terminal', 'desktop'] as const) {
       // Working at 110 columns: the live segments take the second line, so the first keeps its details.
-      const working = await $.ui.mount({ ...band(110, true), surface })
+      const working = await $.ui.mount(band(surface, 110, true))
       expect(await working.find({ type: 'Text', text: /^working$/ })).toBeDefined()
       expect(await working.find({ type: 'Text', text: /^ #2$/ })).toBeDefined()
       expect(await working.find({ type: 'Text', text: /^Explore$/ })).toBeDefined()
@@ -194,7 +207,7 @@ describe('register', () => {
 
     for (const surface of ['terminal', 'desktop'] as const) {
       // Idle again: the tool segment goes; a background agent and unfinished todos stay.
-      const after = await $.ui.mount({ ...band(140), surface })
+      const after = await $.ui.mount(band(surface, 140))
       expect(await after.find({ type: 'Text', text: /^working$/ })).toBeUndefined()
       expect(await after.find({ type: 'Text', text: /^Explore$/ })).toBeDefined()
       expect(await after.find({ type: 'Text', text: /^1\/2$/ })).toBeDefined()
@@ -544,9 +557,9 @@ describe('register', () => {
     for (const surface of SURFACES) {
       const seen = [new Set<number>(), new Set<number>()]
       for (let bodyColumns = 200; bodyColumns >= 30; bodyColumns--) {
-        const { rows, texts } = await drawing($, surface, bodyColumns, isWorking)
+        const { rows, held, texts } = await drawing($, surface, bodyColumns, isWorking)
         expect(rows).toHaveLength(2)
-        for (const row of rows) expect(row.length).toBeLessThanOrEqual(bodyColumns - 2)
+        for (const row of held) expect(row.length).toBeLessThanOrEqual(bodyColumns - 2)
         if (rows.some(row => row.endsWith('…'))) continue
         for (const pattern of kept) expect(texts.some(t => pattern.test(t))).toBe(true)
         shed.forEach((order, i) => {
@@ -602,23 +615,24 @@ describe('register', () => {
     await $.tool.call({ tool: 'Bash', command: 'codex review', description, run_in_background: true })
 
     const labelAt = async (bodyColumns: number, surface: (typeof SURFACES)[number]) => {
-      const line = await $.ui.mount({ ...band(bodyColumns), surface })
+      const line = await $.ui.mount(band(surface, bodyColumns))
       const label = (await line.findAll({ type: 'Text' })).map(t => t.text).find(t => t.startsWith('코덱스'))
       await line.unmount()
       return label ?? ''
     }
 
+    // With room the label shows whole; short of it, in the terminal it gives up columns (counted two
+    // per Hangul character) down to 24 before anything is shed, and the desktop app cuts it itself.
+    const clipped = await labelAt(42, 'terminal')
+    expect(clipped.endsWith('…')).toBe(true)
+    expect(columns(clipped)).toBeGreaterThanOrEqual(23)
+    expect(columns(clipped)).toBeLessThan(columns(description))
+    expect(await labelAt(42, 'desktop')).toBe(description)
     for (const surface of SURFACES) {
-      // With room the label shows whole; short of it, it gives up columns (counted two per Hangul
-      // character) down to 24 before anything is shed.
       expect(await labelAt(140, surface)).toBe(description)
-      const clipped = await labelAt(40, surface)
-      expect(clipped.endsWith('…')).toBe(true)
-      expect(columns(clipped)).toBeGreaterThanOrEqual(23)
-      expect(columns(clipped)).toBeLessThan(columns(description))
-
       for (let bodyColumns = 140; bodyColumns >= 20; bodyColumns--) {
-        for (const row of await rowsOf($, surface, bodyColumns)) expect(columns(row)).toBeLessThanOrEqual(bodyColumns - 2)
+        const { held } = await drawing($, surface, bodyColumns)
+        for (const row of held) expect(columns(row)).toBeLessThanOrEqual(bodyColumns - 2)
       }
     }
 
@@ -626,6 +640,38 @@ describe('register', () => {
     await $.tool.call({ tool: 'TodoWrite', todos: [{ content: todo, status: 'in_progress', activeForm: 'Checking' }] })
     // A long todo shows whole while there is room for it.
     expect(await shows($, new RegExp(`^ ${todo}$`), 200)).toEqual([true, true])
+  })
+
+  test('the desktop app sheds by more of its columns and cuts a label where the row really ends', async ($, on) => {
+    mock.clock(on, { now: START })
+    session(on)
+    on('tool.call', () => ({ result: { backgroundTaskId: 'b1' } }))
+
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work/app' })
+    const description = 'Run test, typecheck, lint and build for the app'
+    await $.tool.call({ tool: 'Bash', command: 'npm run verify', description, run_in_background: true })
+
+    // The same 50 columns: the terminal clips the label; the desktop app hands it whole to the surface.
+    const props = { ...band('terminal', 50).props }
+    const draw = async (surface: (typeof SURFACES)[number]) => {
+      const mounted = await $.ui.mount({ ...band(surface, 50), props })
+      const root = await mounted.drawn()
+      const texts = (await mounted.findAll({ type: 'Text' })).map(t => t.text)
+      await mounted.unmount()
+      return { rows: childrenOf(root), texts }
+    }
+    const terminal = await draw('terminal')
+    expect(terminal.texts).not.toContain(description)
+    expect(terminal.texts.some(t => t.endsWith('…'))).toBe(true)
+    const desktop = await draw('desktop')
+    expect(desktop.texts).toContain(description)
+    // The label is cut by the surface at the edge; every other part holds its width.
+    const live = desktop.rows[1] ?? ''
+    expect(typeof live !== 'string' && live.type === 'Box' && live.props).toMatchObject({ overflow: 'hidden' })
+    for (const part of childrenOf(live)) {
+      if (textOf(part) === description) expect(isCut(part)).toBe(true)
+      else expect(typeof part !== 'string' && part.type === 'Box' && part.props).toMatchObject({ flexShrink: 0 })
+    }
   })
 
   test('in VS Code the line is pinned as the status line instead', async ($, on) => {
