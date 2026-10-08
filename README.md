@@ -7,14 +7,16 @@ Two lines above the Claude Code prompt, for the things you would otherwise stop 
 ⎇ main ±3 ↑2 +120−30 · ▸ Edit register.ts #6 ✗2 · ⧗ codex review 6m · ☐ 2/5 Fix auth bug
 ```
 
-The first line is Claude's budget: the context window and the limits. While idle, the last turn's API error and a
-cooling prompt cache join it. The second line is the work: the repository first, then what is happening right now.
-Each line starts with what is always there, so it stays put while the rest comes and goes.
+The first line is Claude's budget: the context window and the limits, or, with no limit to show, what the session
+has cost. While idle, the last turn's API error and a cooling prompt cache join it. The second line is the work: the
+repository first, then what is happening right now. Each line starts with what is always there, so it stays put while the rest comes and goes.
 
 | Segment | Shows |
 | --- | --- |
 | `◔ 38% 124K left` | How full the context window is, and how many tokens are left. Yellow from 60%, red from 80%. |
 | `◑ 5h 41% ↻2:15` · `◔ 7d 20% ↻3d` | The 5-hour and 7-day subscription limits, each with the time until it resets. Yellow from 70%, red from 90%. |
+| `◕ spend 75% ↻1d` | Behind a Claude gateway: its spend limit, with the time until it resets. Colored as the limits above. |
+| `$1.50` | With no limit to show, as on an API key: what the session has cost so far, as `/cost` counts it. |
 | `▲1:40` | Inside a limit, in red: how long it lasts at the pace of the last half hour. Shown only when it would run out before it resets. |
 | `⎇ main ±3` | The current branch and the number of changed files, or `✓` when clean. |
 | `↑2` | Inside git: commits that are on no remote yet. Left out when the repository has no remote. |
@@ -32,6 +34,7 @@ Each line starts with what is always there, so it stays put while the rest comes
 | --- | --- |
 | `○` `◔` `◑` `◕` `●` | A gauge filling in fifths: the context window first, then the 5-hour and 7-day limits. |
 | `↻` | Time until a limit resets. |
+| `$` | What the session has cost, in US dollars. |
 | `▲` | Time until a limit runs out at the current pace, shown only when that comes before the reset. |
 | `⎇` | The git branch. |
 | `±` / `✓` | Changed files / a clean working tree. |
@@ -51,9 +54,9 @@ does not jump when a turn starts or ends. Each line fits its own width. A todo, 
 command shows whole while there is room, and is clipped with `…` before anything else gives way. When a line is still
 too wide, details go first: on the first line the reset times, tokens left, then the cache; on the second the changed
 lines, the change count, the todo text, the background label (a count takes its place), then git with its unpushed
-count, then whole segments from the right. Context, the limits with their pace warning, an API error, and the
-running tool with its failed calls always stay. If even those do not fit, the line is cut at the edge and ends in
-`…`.
+count, then whole segments from the right. Context, the limits with their pace warning (or the cost), an API error,
+and the running tool with its failed calls always stay. If even those do not fit, the line is cut at the edge and ends
+in `…`.
 
 glance is a Claude Code **mod**: a plugin whose behavior is a hooks module running inside the session. It reads the
 session's own figures (`$.session.usage()`) and lists the session's running agents. It watches tool calls as they
@@ -68,8 +71,8 @@ no files, and never blocks or changes a tool call.
 ## Requirements
 
 - Claude Code **2.1.291** or later, on an account where mods are enabled.
-- The 5-hour / 7-day segment needs a Claude subscription. With an API key there is no limit to show, and the segment is
-  left out.
+- The 5-hour / 7-day segment needs a Claude subscription. With an API key there is no limit to show, and the
+  session's cost shows in its place.
 
 ## Install
 

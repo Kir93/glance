@@ -1,4 +1,4 @@
-import type { AgentInfo, On, RenderNode } from 'claude-code'
+import type { AgentInfo, On, RenderNode, SessionRateLimit } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
@@ -60,15 +60,16 @@ const git =
 
 type Reading = { percentUsed: number; resetsAt: string }
 
-// The session the scenarios below start from: 38% context, both limits, a clean `main`, and the
-// agents and 5-hour reading given.
+// The session the scenarios below start from: 38% context, both limits, $1.50 spent, a clean
+// `main`, and the agents and 5-hour reading given; `rateLimits`, when given, stands for both limits.
 function session(
   on: On,
   {
     agents = [],
     fiveHour = () => ({ percentUsed: 41, resetsAt: '2026-10-06T02:15:00Z' }),
+    rateLimits,
     repo = {},
-  }: { agents?: AgentInfo[]; fiveHour?: () => Reading; repo?: Repo } = {},
+  }: { agents?: AgentInfo[]; fiveHour?: () => Reading; rateLimits?: () => SessionRateLimit[]; repo?: Repo } = {},
 ) {
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/work/app' }))
@@ -77,10 +78,11 @@ function session(
     value: {
       startedAt: START,
       context: { tokens: 76_000, window: 200_000, percent: 38 },
-      rateLimits: [
+      rateLimits: rateLimits?.() ?? [
         { kind: 'five_hour', ...fiveHour() },
         { kind: 'seven_day', percentUsed: 20, resetsAt: '2026-10-09T00:00:00Z' },
       ],
+      cost: { usd: 1.5 },
     },
   }))
   on('agent.list', () => ({ value: agents }))
@@ -441,6 +443,19 @@ describe('register', () => {
     expect(await shows($, /cache/, 140, true)).toEqual([false, false])
     await clock.advance(6 * 60_000)
     expect(await colorOf(/^cache cold$/)).toEqual(['red', 'red'])
+  })
+
+  test('with no limit to show, the cost shows instead; a gateway spend limit shows as a limit', async ($, on) => {
+    mock.clock(on, { now: START })
+    let rateLimits: SessionRateLimit[] = []
+    session(on, { rateLimits: () => rateLimits })
+    on('tool.call', () => ({ result: {} }))
+
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work/app' })
+    for (const surface of SURFACES) expect((await rowsOf($, surface, 140))[0]).toBe('◔ 38% 124K left · $1.50')
+    rateLimits = [{ kind: 'spend_limit', percentUsed: 75, resetsAt: '2026-10-07T00:00:00Z' }]
+    await $.tool.call({ tool: 'Read', file_path: '/work/app/a.ts' })
+    for (const surface of SURFACES) expect((await rowsOf($, surface, 140))[0]).toBe('◔ 38% 124K left · ◕ spend 75% ↻1d')
   })
 
   test('idle, an API error that ended the last turn shows until the next turn', async ($, on) => {

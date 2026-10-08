@@ -1,7 +1,7 @@
 export type GlanceContext = { percent: number; left: number }
 export type GlanceSample = { at: number; percent: number }
 // `readAt`: when the figure was read, so a slower read cannot overwrite a newer one.
-export type GlanceLimit = { window: '5h' | '7d'; percent: number; resetsAt?: string; readAt: number; samples: GlanceSample[] }
+export type GlanceLimit = { window: '5h' | '7d' | 'spend'; percent: number; resetsAt?: string; readAt: number; samples: GlanceSample[] }
 // `ahead`: commits on no remote; `added` / `removed`: lines changed in tracked files since HEAD;
 // `readAt`: when the read started, so an earlier read finishing late cannot overwrite a later one.
 export type GlanceGit = { branch: string; changes: number; ahead: number; added: number; removed: number; readAt: number }
@@ -32,6 +32,8 @@ declare module 'claude-code' {
       background: GlanceBackground[]
       loops: GlanceLoop[]
       lastAnswerAt: number | null
+      // What the session has cost so far, in US dollars; null where the host keeps no ledger.
+      cost: number | null
       apiError: string | null
       now: number
     }

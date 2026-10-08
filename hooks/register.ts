@@ -3,8 +3,8 @@
 //   ◔ 38% 124K left · ◑ 5h 41% ▲1:40 ↻2:15 · ◔ 7d 20% ↻3d
 //   ⎇ main ±3 ↑2 · ▸ Edit register.ts #6 ✗2 · ◇ Explore 45s · ⧗ codex review 6m · ☐ 2/5 Fix auth bug
 //
-// The first line is Claude's budget: the context and the limits, then, while idle, the last turn's
-// API error and a cooling prompt cache. The second is the work: the repository first, so the line
+// The first line is Claude's budget: the context and the limits (with none, what the session has
+// cost), then, while idle, the last turn's API error and a cooling prompt cache. The second is the work: the repository first, so the line
 // is seldom blank, then what is happening right now. Each line starts with what is always there, so
 // it stays put while the rest comes and goes. There are always two lines, so the prompt never jumps.
 // When a line is too wide, long texts give way first, then details (see SHED), then whole segments;
@@ -40,6 +40,7 @@ const todos = atom({ plugin: 'glance', key: 'todos' } as const, [])
 const background = atom({ plugin: 'glance', key: 'background' } as const, [])
 const loops = atom({ plugin: 'glance', key: 'loops' } as const, [])
 const lastAnswerAt = atom({ plugin: 'glance', key: 'lastAnswerAt' } as const, null)
+const cost = atom({ plugin: 'glance', key: 'cost' } as const, null)
 const apiError = atom({ plugin: 'glance', key: 'apiError' } as const, null)
 const now = atom({ plugin: 'glance', key: 'now' } as const, 0)
 
@@ -65,6 +66,8 @@ const PACE_KEEP = 60 * MINUTE
 // The prompt cache is taken to live an hour past the last answer; its last ten minutes are tight.
 const CACHE_TTL = 60 * MINUTE
 const CACHE_TIGHT = 10 * MINUTE
+// The windows a limit is read from, and the name each shows under.
+const WINDOWS = { five_hour: '5h', seven_day: '7d', spend_limit: 'spend' } as const
 const STATUS_COLUMNS = 140
 // The desktop app draws the band in a proportional font, where a line takes fewer columns than a
 // terminal gives it, how many fewer depending on the text. What to shed is judged at this many
@@ -99,6 +102,7 @@ type Snapshot = {
   tasks: GlanceBackground[]
   crew: number
   answeredAt: number | null
+  spent: number | null
   failure: string | null
   at: number
 }
@@ -226,7 +230,7 @@ export const register: Register = on => {
 }
 
 async function snapshot($: EngineInterface): Promise<Snapshot | null> {
-  const [ctx, windows, repo, act, running, list, tasks, judged, answeredAt, failure, at] = await Promise.all([
+  const [ctx, windows, repo, act, running, list, tasks, judged, answeredAt, spent, failure, at] = await Promise.all([
     read($, context),
     read($, limits),
     read($, git),
@@ -236,11 +240,12 @@ async function snapshot($: EngineInterface): Promise<Snapshot | null> {
     read($, background),
     read($, loops),
     read($, lastAnswerAt),
+    read($, cost),
     read($, apiError),
     read($, now),
   ])
   const crew = judged.filter(l => l.isWorkflow).length
-  return ctx === null ? null : { ctx, windows, repo, act, running, list, tasks, crew, answeredAt, failure, at }
+  return ctx === null ? null : { ctx, windows, repo, act, running, list, tasks, crew, answeredAt, spent, failure, at }
 }
 
 async function begin($: EngineInterface, tool: string, id: string | undefined, input: Record<string, unknown>) {
@@ -392,6 +397,7 @@ function stateLine(snap: Snapshot, isWorking: boolean) {
   return [
     contextSegment(snap.ctx),
     ...snap.windows.map(w => limitSegment(w, snap.at)),
+    snap.windows.length === 0 ? costSegment(snap.spent) : null,
     isWorking ? null : apiErrorSegment(snap.failure),
     isWorking ? null : cacheSegment(snap.answeredAt, snap.at),
   ].filter((s): s is Segment => Boolean(s))
@@ -419,11 +425,12 @@ async function readUsage($: EngineInterface) {
   const nextContext: GlanceContext = { percent, left: Math.max(0, window - used) }
 
   await update($, context, () => nextContext)
+  await update($, cost, () => usage.cost?.usd ?? null)
   await update($, limits, previous =>
-    (['five_hour', 'seven_day'] as const).flatMap((kind): GlanceLimit[] => {
+    (Object.keys(WINDOWS) as (keyof typeof WINDOWS)[]).flatMap((kind): GlanceLimit[] => {
       const r = usage.rateLimits.find(l => l.kind === kind)
       if (!r) return []
-      const name = kind === 'five_hour' ? '5h' : '7d'
+      const name = WINDOWS[kind]
       const before = previous.find(p => p.window === name)
       // A slower concurrent read landing after a newer one is stale; it changes nothing.
       if (before && before.readAt > at) return [before]
@@ -529,6 +536,12 @@ function gitSegment(repo: GlanceGit): Segment {
         : []),
     ],
   }
+}
+
+// With no limit to show, as on an API key: what the session has cost so far, never shed.
+function costSegment(usd: number | null): Segment | null {
+  if (!usd) return null
+  return { key: 'cost', keep: true, parts: [{ text: '$', dim: true }, { text: usd < 100 ? usd.toFixed(2) : String(Math.round(usd)) }] }
 }
 
 // While idle after a turn the API ended: the error's kind, never shed.
