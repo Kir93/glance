@@ -19,6 +19,8 @@ export type GlanceBackground = {
   owner?: string
 }
 export type GlanceLoop = { id: string; isWorkflow: boolean }
+// The main thread's last request: its prompt tokens, and the model that answered it.
+export type GlancePrompt = { tokens: number; model: string }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -32,6 +34,9 @@ declare module 'claude-code' {
       background: GlanceBackground[]
       loops: GlanceLoop[]
       lastAnswerAt: number | null
+      lastPrompt: GlancePrompt | null
+      // How long the prompt cache lives, in milliseconds, as the session has shown it.
+      cacheTtl: number
       // What the session has cost so far, in US dollars; null where the host keeps no ledger.
       cost: number | null
       apiError: string | null

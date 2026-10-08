@@ -13,7 +13,7 @@
 // VS Code draws no band above the prompt, so there the two lines, joined and without color, are
 // pinned as this plugin's status line instead.
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, TurnUsage } from 'claude-code'
 
 import type {
   GlanceActivity,
@@ -40,6 +40,7 @@ const todos = atom({ plugin: 'glance', key: 'todos' } as const, [])
 const background = atom({ plugin: 'glance', key: 'background' } as const, [])
 const loops = atom({ plugin: 'glance', key: 'loops' } as const, [])
 const lastAnswerAt = atom({ plugin: 'glance', key: 'lastAnswerAt' } as const, null)
+const lastPrompt = atom({ plugin: 'glance', key: 'lastPrompt' } as const, null)
 const cost = atom({ plugin: 'glance', key: 'cost' } as const, null)
 const apiError = atom({ plugin: 'glance', key: 'apiError' } as const, null)
 const now = atom({ plugin: 'glance', key: 'now' } as const, 0)
@@ -63,9 +64,14 @@ const PACE_MIN_GAP = 10 * MINUTE
 const PACE_MIN_RISE = 1
 const PACE_STEP = MINUTE
 const PACE_KEEP = 60 * MINUTE
-// The prompt cache is taken to live an hour past the last answer; its last ten minutes are tight.
-const CACHE_TTL = 60 * MINUTE
+// The prompt cache lives five minutes or an hour past the last answer, taken to be an hour until a
+// turn after a pause between the two shows which; its last ten minutes are tight. A first request
+// that reads back this much of the last prompt found the cache.
+const CACHE_SHORT = 5 * MINUTE
+const CACHE_LONG = 60 * MINUTE
 const CACHE_TIGHT = 10 * MINUTE
+const CACHE_READ_BACK = 0.9
+const cacheTtl = atom({ plugin: 'glance', key: 'cacheTtl' } as const, CACHE_LONG)
 // The windows a limit is read from, and the name each shows under.
 const WINDOWS = { five_hour: '5h', seven_day: '7d', spend_limit: 'spend' } as const
 const STATUS_COLUMNS = 140
@@ -102,6 +108,7 @@ type Snapshot = {
   tasks: GlanceBackground[]
   crew: number
   answeredAt: number | null
+  ttl: number
   spent: number | null
   failure: string | null
   at: number
@@ -143,6 +150,15 @@ export const register: Register = on => {
         .then(() => publishStatus($))
         .catch(() => undefined)
     }
+    return result
+  })
+
+  // The main thread's requests, forwarded untouched and read once answered: the first after a pause
+  // tells how long the prompt cache lives.
+  on('turn.step', async function* ($, e, next) {
+    const sentAt = $.clock.now().catch(() => null)
+    const result = yield* next(e)
+    if (!e.agentId) await sentAt.then(at => learnCache($, e.index, result.usage, at)).catch(() => undefined)
     return result
   })
 
@@ -230,7 +246,7 @@ export const register: Register = on => {
 }
 
 async function snapshot($: EngineInterface): Promise<Snapshot | null> {
-  const [ctx, windows, repo, act, running, list, tasks, judged, answeredAt, spent, failure, at] = await Promise.all([
+  const [ctx, windows, repo, act, running, list, tasks, judged, answeredAt, ttl, spent, failure, at] = await Promise.all([
     read($, context),
     read($, limits),
     read($, git),
@@ -240,12 +256,13 @@ async function snapshot($: EngineInterface): Promise<Snapshot | null> {
     read($, background),
     read($, loops),
     read($, lastAnswerAt),
+    read($, cacheTtl),
     read($, cost),
     read($, apiError),
     read($, now),
   ])
   const crew = judged.filter(l => l.isWorkflow).length
-  return ctx === null ? null : { ctx, windows, repo, act, running, list, tasks, crew, answeredAt, spent, failure, at }
+  return ctx === null ? null : { ctx, windows, repo, act, running, list, tasks, crew, answeredAt, ttl, spent, failure, at }
 }
 
 async function begin($: EngineInterface, tool: string, id: string | undefined, input: Record<string, unknown>) {
@@ -361,6 +378,22 @@ async function judgeLoop($: EngineInterface, agentId: string) {
   if (judged.isWorkflow) await publishStatus($)
 }
 
+// A main-thread request was answered. The first of a turn begun between five minutes and an hour
+// after the last answer tells how long the cache lives: on the same model, with a prompt that grew
+// from the last one (not compacted), reading the last prompt back means an hour, writing it anew five
+// minutes. Another reason the cache missed reads as five minutes until a later turn reads it back.
+async function learnCache($: EngineInterface, index: number, usage: TurnUsage | null, sentAt: number | null) {
+  if (!usage) return
+  const tokens = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
+  const [before, answeredAt] = await Promise.all([read($, lastPrompt), read($, lastAnswerAt)])
+  await update($, lastPrompt, () => ({ tokens, model: usage.model }))
+  if (index !== 0 || !before || answeredAt === null || sentAt === null) return
+  const idle = sentAt - answeredAt
+  if (idle <= CACHE_SHORT || idle > CACHE_LONG || usage.model !== before.model || tokens < before.tokens) return
+  const ttl = usage.cache_read_input_tokens >= before.tokens * CACHE_READ_BACK ? CACHE_LONG : CACHE_SHORT
+  await update($, cacheTtl, () => ttl)
+}
+
 async function stamp($: EngineInterface) {
   const at = await $.clock.now()
   await update($, now, () => at)
@@ -399,7 +432,7 @@ function stateLine(snap: Snapshot, isWorking: boolean) {
     ...snap.windows.map(w => limitSegment(w, snap.at)),
     snap.windows.length === 0 ? costSegment(snap.spent) : null,
     isWorking ? null : apiErrorSegment(snap.failure),
-    isWorking ? null : cacheSegment(snap.answeredAt, snap.at),
+    isWorking ? null : cacheSegment(snap.answeredAt, snap.ttl, snap.at),
   ].filter((s): s is Segment => Boolean(s))
 }
 
@@ -552,9 +585,9 @@ function apiErrorSegment(failure: string | null): Segment | null {
 
 // While idle, once the prompt cache is about to go: its last minutes in yellow, then cold in red.
 // With time to spare there is nothing to act on, so nothing shows.
-function cacheSegment(answeredAt: number | null, at: number): Segment | null {
+function cacheSegment(answeredAt: number | null, ttl: number, at: number): Segment | null {
   if (answeredAt === null) return null
-  const left = answeredAt + CACHE_TTL - at
+  const left = answeredAt + ttl - at
   if (left >= CACHE_TIGHT) return null
   const part: Part =
     left <= 0 ? { text: 'cache cold', color: 'red' } : { text: `cache ${Math.ceil(left / MINUTE)}m`, color: 'yellow' }

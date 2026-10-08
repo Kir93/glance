@@ -22,7 +22,7 @@ repository first, then what is happening right now. Each line starts with what i
 | `↑2` | Inside git: commits that are on no remote yet. Left out when the repository has no remote. |
 | `+120−30` | Inside git: lines added and removed in tracked files since the last commit. |
 | `✗ overloaded` | While idle, in red: the API error that ended the last turn, until the next turn starts. |
-| `cache 4m` | While idle, in yellow, once the prompt cache has under ten minutes left (counted an hour from the end of the last turn); then `cache cold` in red. With more time left it does not show. |
+| `cache 4m` | While idle, in yellow, once the prompt cache has under ten minutes left (counted from the end of the last turn); then `cache cold` in red. With more time left it does not show. |
 | `▸ Edit register.ts #6` | While Claude works: the tool running now and the number of tool calls this turn. |
 | `✗2` | Beside the running tool, in red: the tool calls this turn that failed or were denied. |
 | `◇ Explore 45s` | While subagents run: the agent type (or a count when several), and how long the oldest has been at it. |
@@ -64,8 +64,10 @@ pass, without holding them up, for the background work, workflows and todos they
 turn, the `classic.Stop` hook input names the background work still in flight, and `classic.StopFailure` names the
 API error that ended it. When files may have changed it runs read-only `git` commands: `status --porcelain`,
 `for-each-ref --count=1 refs/remotes`, `rev-list --count HEAD --not --remotes` and `diff --shortstat HEAD`. Nothing
-in the session reports how long the prompt cache lives, so glance takes it to be an hour; where it lives five
-minutes, the countdown runs long. glance draws through the band above the prompt. It makes no network calls, writes
+in the session says how long the prompt cache lives, five minutes or an hour, so glance takes it to be an hour and
+learns from the token counts of the session's own requests: when a turn starts between five minutes and an hour after
+the last and its first request reads the last prompt back from the cache, the cache lives an hour; when it has to
+write the prompt anew, five minutes. glance draws through the band above the prompt. It makes no network calls, writes
 no files, and never blocks or changes a tool call.
 
 ## Requirements

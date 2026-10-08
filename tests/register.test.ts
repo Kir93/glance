@@ -1,4 +1,4 @@
-import type { AgentInfo, On, RenderNode, SessionRateLimit } from 'claude-code'
+import type { AgentInfo, On, RenderNode, SessionRateLimit, TurnUsage } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
@@ -443,6 +443,44 @@ describe('register', () => {
     expect(await shows($, /cache/, 140, true)).toEqual([false, false])
     await clock.advance(6 * 60_000)
     expect(await colorOf(/^cache cold$/)).toEqual(['red', 'red'])
+  })
+
+  test('the cache countdown follows how long the cache was seen to live', async ($, on) => {
+    const clock = mock.clock(on, { now: START })
+    session(on)
+    let usage: TurnUsage = { model: 'opus', input_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 30_000, output_tokens: 500 }
+    on('turn.step', async function* (_$, e) {
+      return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' as const, usage }
+    })
+    // One turn of one request, `minutes` after the last, that read or wrote this much of the cache.
+    const turn = async (minutes: number, read: number, written: number, agentId?: string) => {
+      await clock.advance(minutes * 60_000)
+      usage = { ...usage, cache_read_input_tokens: read, cache_creation_input_tokens: written }
+      const turnId = `t${clock.now()}`
+      if (!agentId) await $.turn.start({ text: 'go', turnId })
+      const stream = $.turn.step({ turnId, index: 0, model: 'opus', messageCount: 2, agentId })
+      while (!(await stream.next()).done);
+      if (!agentId) await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId })
+    }
+
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work/app' })
+    await turn(0, 0, 30_000)
+    expect(await shows($, /cache/)).toEqual([false, false])
+    // A subagent's request says nothing of the main thread's cache.
+    await turn(20, 0, 32_000, 'sub')
+    // Twenty minutes on, the cache had to be written anew: it lives five minutes.
+    await turn(0, 0, 32_000)
+    expect(await shows($, /^cache 5m$/)).toEqual([true, true])
+    await clock.advance(6 * 60_000)
+    expect(await shows($, /^cache cold$/)).toEqual([true, true])
+    // Half an hour on, a prompt that was compacted meanwhile tells nothing.
+    await turn(24, 0, 10_000)
+    expect(await shows($, /^cache 5m$/)).toEqual([true, true])
+    // Twenty minutes on, the last prompt was read back: it lives an hour.
+    await turn(20, 10_100, 2_000)
+    expect(await shows($, /cache/)).toEqual([false, false])
+    await clock.advance(55 * 60_000)
+    expect(await shows($, /^cache 5m$/)).toEqual([true, true])
   })
 
   test('with no limit to show, the cost shows instead; a gateway spend limit shows as a limit', async ($, on) => {
