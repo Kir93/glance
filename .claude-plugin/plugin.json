@@ -1,6 +1,6 @@
 {
   "name": "glance",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Two lines above the prompt: context left, 5-hour and 7-day limits with a pace warning, git state with unpushed commits and changed lines, the prompt cache and the last API error while idle, plus the tool, agents, workflows, background work and todos while they are running. Terminal and desktop.",
   "types": "./types/index.d.ts",
   "author": {
